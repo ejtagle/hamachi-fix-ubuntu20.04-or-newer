@@ -3,6 +3,7 @@
  */
 
 #define _GNU_SOURCE
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -914,6 +915,9 @@ typedef void* (*pfn_valloc_t)(size_t size);
 typedef void* (*pfn_pvalloc_t)(size_t size);
 typedef void (*pfn_malloc_stats_t)(void);
 
+typedef void* (*pfn_new_t)(size_t size);
+typedef void (*pfn_delete_t)(void*);
+
 static int pfn_inited = 0;
 static pfn_free_t pfn_free = NULL;
 static pfn_cfree_t pfn_cfree = NULL;
@@ -930,6 +934,10 @@ static pfn_posix_memalign_t pfn_posix_memalign = NULL;
 static pfn_valloc_t pfn_valloc = NULL;
 static pfn_pvalloc_t pfn_pvalloc = NULL;
 static pfn_malloc_stats_t pfn_malloc_stats = NULL;
+
+// C++ runtime interception
+static pfn_new_t pfn_new = NULL;
+static pfn_delete_t pfn_delete = NULL;
 
 static void init(void) {
     char* error;
@@ -1012,7 +1020,19 @@ static void init(void) {
         LOG("%s", error);
         exit(1);
     }
-	
+
+	// C++ runtime interception
+    pfn_new = (pfn_new_t) dlsym(RTLD_NEXT, "_Znwm");
+    if ((error = dlerror()) != NULL) {
+        LOG("%s", error);
+        exit(1);
+    }
+    pfn_delete = (pfn_delete_t) dlsym(RTLD_NEXT, "_ZdlPv");
+    if ((error = dlerror()) != NULL) {
+        LOG("%s", error);
+        exit(1);
+    }
+		
 	pfn_inited = 1;
     LOG("allocation interception in place: %s","OK");
 }
@@ -1020,8 +1040,8 @@ static void init(void) {
 static size_t rndsize(size_t s) {
 	// Always add the extra size 
 	s += EXTRA_SIZE;
-	// Round to a multiple of 4k
-	s = (s + 4095) & (~(4095));
+	// Round to a multiple of 256
+	s = (s + 255) & (~(255));
 	// Done
 	return s;
 }
@@ -1147,5 +1167,73 @@ void* pvalloc(size_t size) {
 }
 
 void malloc_stats(void) {
+}
+
+// C++ interception -- We know 77 bytes blocks cause trouble, so...
+typedef struct blk {
+	char data[124];
+	int used;
+} blk_t;
+static blk_t blks[8192] = {{{0},0}};
+
+static void* alloc_77_bytes(void) 
+{
+	int i;
+	for (i = 0; i < 8192; ++i) {
+		if (__sync_add_and_fetch(&blks[i].used, 1) == 1) {
+			// Block was successfully reserved.
+			memset(&blks[i].data,0,sizeof(blks[i].data));
+			return (void*) &blks[i].data;
+		} else {
+			__sync_sub_and_fetch(&blks[i].used, 1);
+		}
+	}
+	// At this point, we have no more room on our custom pool. Fallback to the new[] operator
+	return pfn_new(77);
+}
+
+static int free_77_bytes(void* ptr) {
+	ptrdiff_t delta = (char*)ptr - (char*)&blks[0];
+	
+	if (delta >= 0 && delta < sizeof(blks)) {
+		// Dealing with a pointer to our private pool
+		if ((delta % sizeof(blk_t)) != 0) {
+			LOG("Invalid pointer: %p", ptr);
+			return 0;
+		}
+		// Release the block.
+		blk_t* blk = (blk_t*)ptr;
+		memset(&blk->data,0,sizeof(blk->data));
+		__sync_sub_and_fetch(&blk->used, 1);
+		return 1;
+	}
+	return 0;
+}
+
+void* _Znwm(size_t size) {
+	// void* operator new(size_t size)
+    LOG("operator new: s:%zu", size);
+    init();
+	
+	// Are we dealing with a suspicious request ?
+	if (size == 77) {
+		// Yes, use our private pool, so accesses after frees are valid
+		return alloc_77_bytes();
+	}
+	
+	// Otherwise, default to the normal pool
+	return pfn_new(size);
+}
+
+void _ZdlPv(void* ptr) {
+	// operator delete(void*)
+    LOG("operator delete: p:%p", ptr);
+    init();
+	
+	// Try to free it as if it was from our private pool
+	if (!free_77_bytes(ptr)) {
+		// It was not. Use the default 
+		pfn_delete(ptr);
+	}
 }
 

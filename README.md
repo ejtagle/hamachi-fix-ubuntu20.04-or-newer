@@ -29,7 +29,7 @@ You must do it as root, as hamachi is owned by root:
 
 1) Compile the malloc() interceptor shared object library:
 
-	gcc -O2 -Wall -o hamachid-patcher.so -shared hamachid-patcher.cc
+	gcc -O2 -Wall -o hamachid-patcher.so -shared hamachid-patcher.c
 	
 2) Compile the hamachid program wrapper:
 
@@ -37,17 +37,19 @@ You must do it as root, as hamachi is owned by root:
 	
 3) Rename /opt/logmein-hamachi/bin/hamachid to /opt/logmein-hamachi/bin/hamachid.org
 
-	mv /opt/logmein-hamachi/bin/hamachid /opt/logmein-hamachi/bin/hamachid.org
+	sudo mv /opt/logmein-hamachi/bin/hamachid /opt/logmein-hamachi/bin/hamachid.org
 	
 4) Copy both the interceptor (hamachid-patcher.so) and wrapper (hamachid) to /opt/logmein-hamachi/bin
 
-	cp hamachid-patcher.so /opt/logmein-hamachi/bin/
-	cp hamachid /opt/logmein-hamachi/bin/
+	sudo cp hamachid-patcher.so /opt/logmein-hamachi/bin/
+	
+	sudo cp hamachid /opt/logmein-hamachi/bin/
 	
 5) Done!. Hamachi will not crash anymore. If the service is already running, please stop it and start it again, in order to load the patched version
 
-	/etc/init.d/logmein-hamachi stop
-	/etc/init.d/logmein-hamachi start
+	sudo /etc/init.d/logmein-hamachi stop
+	
+	sudo /etc/init.d/logmein-hamachi start
 	
 
 

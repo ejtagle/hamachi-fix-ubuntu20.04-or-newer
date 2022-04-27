@@ -24,6 +24,10 @@ To avoid requiring a severe modification to the way the hamachi client is invoke
 
 How to install:
 ==============
+you can use script installer.sh with
+./installer.sh 
+
+or installing manually :
 
 You must do it as root, as hamachi is owned by root:
 
